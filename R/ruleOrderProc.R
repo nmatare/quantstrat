@@ -408,8 +408,8 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
 
                  time_delay <- as.numeric(ordersubset[ii, "Order.StatusTime"])
                  txntime    <- index(ordersubset[ii, ]) + time_delay
-                 txntime    <- first(index(mktdata[paste0(txntime, "::")])) # first obs after time_delay
-                 
+                 txntime    <- as.POSIXct(format(index(first(mktdata[paste0(txntime, "::")])), "%Y-%m-%d %H:%M:%S"), tz = Sys.getenv('TZ')) # first obs after time_delay
+        
                  if(is.na(txntime)) 
                   txnprice <- NA # if txntime is past available mktdata make NA
                  else 
