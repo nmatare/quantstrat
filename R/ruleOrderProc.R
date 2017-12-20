@@ -99,6 +99,9 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
     isOHLCmktdata <- is.OHLC(mktdata)
     isBBOmktdata  <- is.BBO(mktdata)
     
+    if(isOHLCmktdata && all(is.na(OHLC(mktdataTimestamp)[ ,1:4])) || isBBOmktdata && all(is.na(BBO(mktdataTimestamp)[ ,1:3])))
+      return() # in the event that they're NAs in mktdta and limit orders try to fire on unavailable data
+
     for (ii in OpenOrders.i )
     {
       if(ordersubset[ii, "Order.Status"] != "open")   # need to check this bc side effects may have changed order.status in this loop
@@ -408,13 +411,15 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
 
                  time_delay <- as.numeric(ordersubset[ii, "Order.StatusTime"])
                  txntime    <- index(ordersubset[ii, ]) + time_delay
-                 txntime    <- as.POSIXct(format(index(first(mktdata[paste0(txntime, "::")])), "%Y-%m-%d %H:%M:%S"), tz = Sys.getenv('TZ')) # first obs after time_delay
-        
-                 if(is.na(txntime)) 
-                  txnprice <- NA # if txntime is past available mktdata make NA
-                 else 
-                  txnprice   <- as.numeric(getPrice(mktdata[txntime], prefer = prefer)[ ,1])
+                 txntime    <- index(first(mktdata[paste0(txntime, "::")]))
 
+                 if(is.na(txntime) || !length(txntime))
+                  txnprice <- NA # if txntime is past available mktdata make NA
+                 else {
+                  txntime    <- as.POSIXct(format(txntime, "%Y-%m-%d %H:%M:%S"), tz = Sys.getenv('TZ')) # first obs after time_delay
+                  txnprice   <- as.numeric(getPrice(mktdata[txntime], prefer = prefer)[ ,1])
+                 }
+                 
                  ordersubset[ii,"Order.Price"] <- txnprice # replace the Order.Price with what the order would(or did) cost       
      
                } else if(isBBOmktdata){
