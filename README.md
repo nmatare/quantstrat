@@ -1,4 +1,6 @@
 # quantstrat
 
-### Development branch of braverock/quanstrat -- adds patches and functionality, not well tested over multiple scenarios: needs testing
-
+### Development branch :
+* Adds patches and functionality that are not currently implemented in quantstrat/braverock;and
+* Needs testing; and
+* To view history, see closed pull requests.
