@@ -455,7 +455,7 @@ applyRules <- function(portfolio,
                 openOrderSubset <- ordersubset[oo.idx,]
 
                 # process open market orders
-                if(any('market'==openOrderSubset[,'Order.Type']))
+                if(any(openOrderSubset[,'Order.Type'] %in% c("market", "goodaftertime")))
                 {
                     # if there are any market orders, set hasmktord to TRUE
                     # other orders still need to be processed? -JMU
