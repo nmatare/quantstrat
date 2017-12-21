@@ -157,6 +157,8 @@ applyStrategy <- function(strategy,
              }
              mktdata <- get(symbol, envir=envir)
          }
+
+         mktdata <- mktdata[if(is.null(rule.subset)) "/" else rule.subset] # cut mktdata object here based upon rule.subset (avoid dIndex problems)
          
          # loop over indicators
          sret$indicators <- applyIndicators(strategy=strategy, mktdata=mktdata , parameters=parameters, ... )
@@ -194,7 +196,6 @@ applyStrategy <- function(strategy,
                                         parameters=parameters,  
                                         ..., 
                                         path.dep=FALSE,
-                                        rule.subset=rule.subset,
                                         debug=debug)
          
          # Check for open orders
@@ -210,7 +211,6 @@ applyStrategy <- function(strategy,
                                                      parameters=parameters,  
                                                      ..., 
                                                      path.dep=TRUE,
-                                                     rule.subset=rule.subset,
                                                      debug=debug)}
          
          if(isTRUE(initBySymbol)) {
