@@ -143,8 +143,10 @@ applyStrategy <- function(strategy,
        if(isTRUE(initStrat)) initStrategy(strategy=strategy, portfolio, symbols, ...=...)
        
        if(isTRUE(debug)) ret[[portfolio]]<-list() # this is slot [[i]] which we will use later
-       pobj<-.getPortfolio(portfolio)
-       symbols<- ls(pobj$symbols)
+       
+       if(is.null(symbols)) # else use the symbols the user specified
+        symbols <- ls(.getPortfolio(portfolio)$symbols)
+       
        sret<-new.env(hash=TRUE)
        if(!is.null(parameters) && !all(symbols %in% names(parameters)))
         stop("The symbols included in your portfolio do not all have accompanying parameters")
