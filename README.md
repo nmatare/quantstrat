@@ -8,4 +8,4 @@
 #### [21 Decemember 2017]
 * rule.subset modifies mktdata object directly
 * goodaftertime orders supported
-
+* 'applyStrategy' parameter's arugment supports lookup per symbol 
