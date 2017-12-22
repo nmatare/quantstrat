@@ -1,6 +1,6 @@
 
 
-symbol = "ISIS:43861"
+symbol = "IBM:342343"
 
 # for each symbol generate strategy for symbol that installs
 
@@ -8,7 +8,7 @@ symbol = "ISIS:43861"
 # pass parameters 
 
 parameters <- data.frame(
-	Symbol = "ISIS:43861",
+	Symbol = "IBM:342343",
 	border_value.z_score = 1.96, 
 	border_value.look_back = 254, 
 	border_value.fixed = FALSE, 
@@ -20,8 +20,10 @@ port = 7496
 library(IBrokers)
 tws.connection  <- IBrokers::twsConnect(port = port)
 envir = ".GlobalEnv"
+twsDisconnect(tws.connection)
 
-snapShot <- function(twsCon, eWrapper, timestamp, file, playback = 1, ...){
+
+snapShot <- function(twsCon, eWrapper, timestamp, file, ...){
     if(missing(eWrapper))
         eWrapper <- eWrapper()
     names(eWrapper$.Data$data) <- eWrapper$.Data$symbols
@@ -29,19 +31,25 @@ snapShot <- function(twsCon, eWrapper, timestamp, file, playback = 1, ...){
     con <- twsCon[[1]]
     while(TRUE){
 
-        socketSelect(list(con), FALSE, 2L) # 2 sec timeout
-        curMsg <- .Internal(readBin(con, "character", 1L, NA_integer_, TRUE, FALSE))
-        if(!length(curMsg)) 
-            stop("Timeout")           
-        if(!is.null(timestamp))
-            processMsg(curMsg, con, eWrapper, format(Sys.time(), timestamp), file, ...)
-        else 
-            processMsg(curMsg, con, eWrapper, timestamp, file, ...)
-        
-        if(!any(sapply(eWrapper$.Data$data, is.na)))
-            return(do.call(rbind, lapply(eWrapper$.Data$data,as.data.frame)))
+        if(!socketSelect(list(con), FALSE, NULL)) # infinte 'tries'
+            break
+        else {
+
+            # browser()
+            curMsg <- .Internal(readBin(con, "character", 1L, NA_integer_, TRUE, FALSE))
+      
+            if(!is.null(timestamp))
+                processMsg(curMsg, con, eWrapper, format(Sys.time(), timestamp), file, ...)
+            else 
+                processMsg(curMsg, con, eWrapper, timestamp, file, ...)
+            
+            if(!any(sapply(eWrapper$.Data$data, is.na)))
+                return(do.call(rbind, lapply(eWrapper$.Data$data, as.xts)))
+
+        }  
     }
 }
+
 
 initTWS <- function(connection, symbol, barsize, duration, envir){
 
@@ -53,31 +61,153 @@ initTWS <- function(connection, symbol, barsize, duration, envir){
                         conn        = connection, 
                         Contract    = tws.ticker,
                         barSize     = barsize,
-                        duration    = duration
-    )
+                        duration    = duration)
+    tzone(XTS) <- "Etc/GMT+5"   
     assign(symbol, OHLCV(XTS), envir = eval(parse(text = envir)))
     return(TRUE)        
 }
 
 connection =tws.connection
-liveTWS <- function(connection, symbol, envr){
+
+symbols = c("IBM:423423", "AMZN:34234", "AAPL:4234")
+
+
+liveTWS <- function(connection, symbols, envr){
 
     # fetch symbol data
-    combined    <- unlist(strsplit(symbol, ":"))
-    ticker      <- combined[1]
-    ticker = "SPY"
-    # permno      <- combined[2]
-    tws.ticker  <- IBrokers::twsSTK(ticker)
+    tickers      <- sapply(strsplit(symbols, ":"), function(x) x[1])
+    tws.tickers  <- lapply(tickers, IBrokers::twsSTK)
 
-    DATA.old <- get(symbol, envir = eval(parse(text = envir))) # need for signal calcs
+    reqRealTimeBars(connection, tws.tickers, eventWrapper = eWrapper.RealTimeBars.CSV(3), CALLBACK = snapShot)
 
-    reqRealTimeBars(connection, tws.ticker, eventWrapper = eWrapper.data(1), CALLBACK = snapShot)
+    DATA.update <- reqRealTimeBars(connection, tws.tickers, eventWrapper = eWrapper.RealTimeBars(), CALLBACK = snapShot)
+    
+
+    DATA.old    <- get(symbol, envir = eval(parse(text = envir))) # need for signal calcs
+    DATA.update <- OHLCV(DATA.update)
+    DATA.new    <- to.weekly(rbind(DATA.old[-1, ], DATA.update)) # maintain same size of mktdata object
+
+    colnames(DATA.new) <- colnames(DATA.old)
+    return(DATA.new)
+
+}  
+
+for(ticker in tickers){
+
+     print(ticker)
+     tws.ticker  <- IBrokers::twsSTK(ticker)
+     print(reqRealTimeBars(connection, tws.ticker, eventWrapper = eWrapper.RealTimeBars(), CALLBACK = snapShot))
+
+}
+
+eWrapper.snapshot <- function() {
+  eW <- eWrapper(NULL)
+  eW$assign.Data("EOD", FALSE)
+  sapply(c("bidSize","bidPrice",
+           "askPrice","askSize",
+           "lastPrice",
+           "Open","High","Low","Close",
+           "lastSize","Volume","lastTimeStamp"), function(X) eW$assign.Data(X, NA))
+  eW$tickPrice <- function(curMsg, msg, timestamp, file, ...)
+  {
+    tickType = msg[3]
+    if(tickType == .twsTickType$BID) {
+      eW$assign.Data("bidPrice", as.numeric(msg[4]))
+      eW$assign.Data("bidSize" , as.numeric(msg[5])) 
+    } else
+    if(tickType == .twsTickType$ASK) {
+      eW$assign.Data("askPrice", as.numeric(msg[4]))
+      eW$assign.Data("askSize" , as.numeric(msg[5])) 
+    } else
+    if(tickType == .twsTickType$LAST) {
+      eW$assign.Data("lastPrice", as.numeric(msg[4]))
+    } else
+    if(tickType == .twsTickType$OPEN) {
+      eW$assign.Data("Open", as.numeric(msg[4]))
+    } else
+    if(tickType == .twsTickType$HIGH) {
+      eW$assign.Data("High", as.numeric(msg[4]))
+    } else
+    if(tickType == .twsTickType$LOW) {
+      eW$assign.Data("Low", as.numeric(msg[4]))
+    } else
+    if(tickType == .twsTickType$CLOSE) {
+      eW$assign.Data("Close", as.numeric(msg[4]))
+    }
+  }
+  eW$tickSize <- function(curMsg, msg, timestamp, file, ...)
+  {
+    tickType <- msg[3]
+    if(tickType == .twsTickType$LAST_SIZE) {
+      eW$assign.Data("lastSize", as.numeric(msg[4]))
+    } else
+    if(tickType == .twsTickType$VOLUME) {
+      eW$assign.Data("Volume", as.numeric(msg[4]))
+    }
+  }
+  eW$tickString <- function(curMsg, msg, timestamp, file, ...)
+  {
+    tickType <- msg[3]
+    eW$assign.Data("lastTimeStamp", structure(as.numeric(msg[4]),
+                                        class=c("POSIXt","POSIXct")))
+  }
+  eW$tickSnapshotEnd <- function(curMsg, msg, timestamp, file, ...)
+  {
+    eW$assign.Data("EOD", TRUE)
+  }
+  return(eW)
+}
+
+connection <- tws.connection <- IBrokers::twsConnect(port = port)
+reqRealTimeBars(connection, lapply(tickers[1], twsSTK), eventWrapper = eWrapper(1))
+twsDisconnect(connection)
+
+reqMktData(connection, lapply(tickers, twsSTK), snapshot = TRUE)
+
+reqMktData(connection, lapply(tickers, twsSTK), eventWrapper = eWrapper.snapshot())
+
+
+if(snapshot == "1") {
+  eventWrapper <- eWrapper.snapshot()
+  while(1) {
+    socketSelect(list(con), FALSE, NULL)
+    curMsg <- readBin(con, character(), 1)
+    processMsg(curMsg, con, eventWrapper, NULL, file, ...)
+    if(curMsg == .twsIncomingMSG$TICK_SNAPSHOT_END) {
+    fullSnapshot <- rbind(fullSnapshot, data.frame(
+                            lastTimeStamp=eventWrapper$get.Data("lastTimeStamp"),
+                            symbol=symbol.or.local(Contract[[n]]),
+                            #symbol=Contract[[n]]$symbol,
+                            bidSize=eventWrapper$get.Data("bidSize"),
+                            bidPrice=eventWrapper$get.Data("bidPrice"),
+                            askPrice=eventWrapper$get.Data("askPrice"),
+                            askSize=eventWrapper$get.Data("askSize"),
+                            lastPrice=eventWrapper$get.Data("lastPrice"),
+                            Volume=eventWrapper$get.Data("Volume"),
+                            Open=eventWrapper$get.Data("Open"),
+                            High=eventWrapper$get.Data("High"),
+                            Low=eventWrapper$get.Data("Low"),
+                            Close=eventWrapper$get.Data("Close")
+                           ))
+    break
+    }
+  }
+if(n == length(Contract)) return(fullSnapshot)
+}
+ticker_id <- as.character(as.numeric(tickerId)+n)
+symbols. <- c(symbols., symbol.or.local(Contract[[n]]))
+#symbols. <- c(symbols., Contract[[n]]$symbol)
+}
+}
+
+
+tickers = c('IBM', "AMZN")
+
 
     # add to old data
     # periodicty checks
     # remove last observation from old data
-    # reassign
-}
+    # reassign}
 
 tradeStrategy <- function(
     query,
@@ -148,23 +278,30 @@ tradeStrategy <- function(
 
    
     symbol = "IBM:342343"
-    # initalize 
+    # init strategy(s) per symbol 
     for(symbol in symbols){
         
-        # user defined function to init mktdata for each symbol
-        .initialize_mktdata(FUN = init.FUN, ... = ...)      # first init data
         symbol.arguments[[symbol]]  <- 
             quantstrat:::install.param.combo(
                 strategy        = strategy,                             # global strategy 
                 param.combo     = .get_symbol_args(symbol, parameters), # symbol strategy
                 paramset.label  = names(strategy$paramsets))
+        symbol.arguments[[symbol]]$paramsets <- NULL                    # avoid confusion
     }
+
+    # init mktdata objects
+    .initialize_mktdata(FUN = init.FUN, ... = ...) 
  
 
     .initialize_mktdata(FUN = init.FUN, connection = tws.connection, symbol = symbol, barsize = '1 day', duration = '1 Y', envir = ".GlobalEnv")
-    get(symbol)
+    mktdata = (get(symbol))
 
     while(TRUE){
+
+        #IF OLHC wait until next bar period then run update
+        # ?per symbol or as a group
+
+        #IF BBO then continously querry for the bid ask spread and feed into apply rules
 
         # what until Sys.time reaches period for update - proc time
 
@@ -172,125 +309,131 @@ tradeStrategy <- function(
 
         # if perido
 
+       # if BBO trade on ticks vs if OHLC trade on bars
+
        for(symbol in symbols){
 	       sret <- new.env(hash = TRUE)
            .update_mktdata(FUN = live.FUN, ...) # update the datafeed for symbol
 
-        # apply indicators
-        # apply signals
-        # apply trade logic
+        Cl(mktdata)
 
-       }
-
-       # record errors
-       # do book keeping in new account and portfolio
-       # send bookkeep
-       # sleep for period
-
-    }
-
-
-
-	for(symbol in symbols){
-
-   
-
-
-
-        # get current mktdata for the symbol
-        mktdataFUN <- ### DO HERE TO PULL RECENT DATA ###
-        mktdata <- simfeed(DATA)
-
-## get mktdata on period, given backfill
-## run on this
-
-
-        symbol.strategy
-
-        combined <- unlist(strsplit(symbol, ":"))
-        ticker   <- combined[1]
-        ticker      <- "IBM"
-        permno   <- combined[2]
-
-        
-        tws.ticker      <- IBrokers::twsSTK(ticker)
-
-
-        
-
-        symbol = 
-        data_AAPL = reqHistoricalData(tws, symbol)
-        print (data_AAPL)
-
-
-        mktdta <- requestLive(, ...) # how to query data
+        mktdata  = cbind(IBM.Trading = rep(1, nrow(mktdata)), mktdata)
 
         # loop over indicators
         sret$indicators <- applyIndicators(
         	strategy 	= strategy, 
         	mktdata 	= mktdata, 
-        	parameters 	= parameters, 
-        	... 
+        	parameters 	= parameters
+        	# ... 
         )
-         
+
         if(inherits(sret$indicators,"xts") && 
-        	nrow(mktdata) == nrow(sret$indicators)){
-        mktdata 			<- sret$indicators
-        sret$indicators 	<- NULL
+           nrow(mktdata) == nrow(sret$indicators)){
+            mktdata         <- sret$indicators
+            sret$indicators <- NULL
         }
-         
-        # loop over signal generators
-        sret$signals <- applySignals(strategy=strategy, mktdata=mktdata, parameters=parameters, ... )
+           
+        # loop over signals
+        sret$signals <- applySignals(
+            strategy    = strategy, 
+            mktdata     = mktdata, 
+            parameters  = parameters
+            # ... 
+        )
+        signals.num <- length(strategy$signals)
+        signals.idx <- ncol(sret$signals) 
 
-        if(inherits(sret$signals,"xts") & nrow(mktdata)==nrow(sret$signals)){
-        mktdata<-sret$signals
-        sret$signals<-NULL
+        if(inherits(sret$signals,"xts") && 
+           nrow(mktdata) == nrow(sret$signals)){
+            mktdata         <- sret$signals
+            sret$signals    <- NULL
         }
 
-         # fire rules if signal else move onto next symbol
+        mktdata.current <- last(mktdata) # 'push' 
+
+        curIndex <- 1 
+    ## push into env that stores mktdata for each symbol
+
+        signal <- last(mktdata[ ,(signals.idx - signals.num + 1L):signals.idx])       
+        if(!signal) # if no signal ==> move onto next symbol 
+            next
+
+        # signal so fire rules
+        if(!any(unlist(sapply(strategy$rules, 
+           function(x) sapply(x, function(x) x$path.dep)))))
+            stop("Path indepedent rules not yet supported")
+        sret$rules <- list()
+
+
          
-         #loop over rules  
-         sret$rules<-list()
-             
-         # only fire nonpath/pathdep when true
-         # TODO make this more elegant
-         pd <- FALSE
-         for(i in 1:length(strategy$rules)){  
-           if(length(strategy$rules[[i]])!=0){
-            z <- strategy$rules[[i]] 
-                if(z[[1]]$path.dep==TRUE)
-                    pd <- TRUE
-            }
-         }
-         
-         sret$rules$nonpath<-applyRules(portfolio=portfolio, 
-                                        symbol=symbol, 
-                                        strategy=strategy, 
-                                        mktdata=mktdata, 
-                                        Dates=NULL, 
-                                        indicators=sret$indicators, 
-                                        signals=sret$signals, 
-                                        parameters=parameters,  
-                                        ..., 
-                                        path.dep=FALSE,
-                                        rule.subset=rule.subset,
-                                        debug=debug)
-         
-         # Check for open orders
-         rem.orders <- suppressWarnings(getOrders(portfolio=portfolio, symbol=symbol, status="open")) 
-         if(NROW(rem.orders)>0){pd <- TRUE}
-         if(pd==TRUE){sret$rules$pathdep<-applyRules(portfolio=portfolio, 
-                                                     symbol=symbol, 
-                                                     strategy=strategy, 
-                                                     mktdata=mktdata, 
-                                                     Dates=NULL, 
-                                                     indicators=sret$indicators, 
-                                                     signals=sret$signals, 
-                                                     parameters=parameters,  
-                                                     ..., 
-                                                     path.dep=TRUE,
-                                                     rule.subset=rule.subset,
-                                                     debug=debug)}
+tradeRules <- function(
+    portfolio,
+    symbol,
+    mktdata,
+    indicators,
+    signals,
+    parameters){
+
+    # cut mktdata object to last signal // similar to dindex 
+    last(mktdata)
+
+    # only evaluate on current time t
+
+    # get prices for the current signal
+    if(is.BBO(mktdata)) {
+
+        mktPrice <- list(
+            stoplimit = list(
+                posQty = mktdata[ ,has.Ask(mktdata, which = TRUE)[1]],
+                negQty = mktdata[ ,has.Bid(mktdata, which = TRUE)[1]]
+        ),
+            limit = list(
+                posQty = mktdata[ ,has.Ask(mktdata, which = TRUE)[1]],
+                negQty = mktdata[ ,has.Bid(mktdata, which = TRUE)[1]]
+        ),
+            stoptrailing = list(
+                posQty = getPrice(mktdata, prefer = 'offer')[ ,1],
+                negQty = getPrice(mktdata, prefer = 'bid')[ ,1])
+        )
+    } else if (is.OHLC(mktdata)) {
+
+        mktPrice <- list(
+            stoplimit = list(
+                posQty = mktdata[ ,has.Hi(mktdata, which = TRUE)[1]],
+                negQty = mktdata[ ,has.Lo(mktdata, which = TRUE)[1]]
+            ),
+            limit = list(
+                posQty = mktdata[ ,has.Lo(mktdata, which = TRUE)[1]],
+                negQty = mktdata[ ,has.Hi(mktdata, which = TRUE)[1]]
+            ),
+            stoptrailing = list(
+                posQty = getPrice(mktdata, prefer = 'close')[ ,1],
+                negQty = getPrice(mktdata, prefer = 'close')[ ,1]
+            )
+        )
+    } else { # univariate or something built with fn_SpreadBuilder
+
+        prefer <- if(hasArg("prefer")) match.call(expand.dots = TRUE)$prefer else NULL
+        mktPrice <- list(
+            stoplimit    = list(price = getPrice(mktdata, prefer = prefer)[ ,1]),
+            limit        = list(price = getPrice(mktdata, prefer = prefer)[ ,1]),
+            stoptrailing = list(price = getPrice(mktdata, prefer = prefer)[ ,1])
+        )
+    }
+
+    mktPrice$isOHLC <- is.OHLC(mktdata)
+    mktPrice$isBBO  <- is.BBO(mktdata)
+
+    ## loop through the rules and send the orders to the broker
+
+    ## evaluate if the orders where closed?
+    ## and get there results
+
+    ## save mktdata object
+    
+
+}
+
          
          if(isTRUE(initBySymbol)) {
              if(hasArg(Interval)){
