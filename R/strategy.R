@@ -146,7 +146,9 @@ applyStrategy <- function(strategy,
        pobj<-.getPortfolio(portfolio)
        symbols<- ls(pobj$symbols)
        sret<-new.env(hash=TRUE)
-       
+       if(!is.null(parameters) && !all(symbols %in% names(parameters)))
+        stop("The symbols included in your portfolio do not all have accompanying parameters")
+
        for (symbol in symbols){
          if(isTRUE(load.mktdata)){
              if(isTRUE(initBySymbol)) initSymbol(strategy, symbol, ... = ...)
