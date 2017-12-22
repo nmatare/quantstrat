@@ -8,4 +8,5 @@
 #### [21 Decemember 2017]
 * rule.subset modifies mktdata object directly
 * goodaftertime orders supported
-* 'applyStrategy' parameter's arugment supports lookup per symbol 
+* 'applyStrategy' parameter's arugment supports lookup per symbol
+* 'clone.orderbook' now removes orderbook history; that is, strip.history = TRUE does what it's supposed to
