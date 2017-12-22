@@ -91,7 +91,7 @@ strategy <- function(name, ..., assets=NULL, constraints=NULL ,store=FALSE)
 #' @param strategy an object of type 'strategy' to add the indicator to
 #' @param portfolios a list of portfolios to apply the strategy to
 #' @param mktdata an xts object containing market data.  depending on indicators, may need to be in OHLCV or BBO formats, default NULL
-#' @param parameters named list of parameters to be applied during evaluation of the strategy, default NULL
+#' @param parameters a list of parameters named by symbol to be applied during evaluation of the strategy, default NULL
 #' @param ... any other passthru parameters
 #' @param debug if TRUE, return output list
 #' @param symbols character vector identifying symbols to initialize a portfolio for, default NULL
@@ -159,7 +159,7 @@ applyStrategy <- function(strategy,
          }
          
          # loop over indicators
-         sret$indicators <- applyIndicators(strategy=strategy, mktdata=mktdata , parameters=parameters, ... )
+         sret$indicators <- applyIndicators(strategy=strategy, mktdata=mktdata , parameters=parameters[[symbol]], ... )
          
          if(inherits(sret$indicators,"xts") & nrow(mktdata)==nrow(sret$indicators)){
            mktdata<-sret$indicators
@@ -167,7 +167,7 @@ applyStrategy <- function(strategy,
          }
          
          # loop over signal generators
-         sret$signals <- applySignals(strategy=strategy, mktdata=mktdata, parameters=parameters, ... )
+         sret$signals <- applySignals(strategy=strategy, mktdata=mktdata, parameters=parameters[[symbol]], ... )
          
          if(inherits(sret$signals,"xts") & nrow(mktdata)==nrow(sret$signals)){
            mktdata<-sret$signals
@@ -191,7 +191,7 @@ applyStrategy <- function(strategy,
                                         Dates=NULL, 
                                         indicators=sret$indicators, 
                                         signals=sret$signals, 
-                                        parameters=parameters,  
+                                        parameters=parameters[[symbol]],  
                                         ..., 
                                         path.dep=FALSE,
                                         rule.subset=rule.subset,
@@ -207,7 +207,7 @@ applyStrategy <- function(strategy,
                                                      Dates=NULL, 
                                                      indicators=sret$indicators, 
                                                      signals=sret$signals, 
-                                                     parameters=parameters,  
+                                                     parameters=parameters[[symbol]],  
                                                      ..., 
                                                      path.dep=TRUE,
                                                      rule.subset=rule.subset,
