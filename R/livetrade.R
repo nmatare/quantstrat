@@ -19,39 +19,16 @@ parameters <- data.frame(
 port = 7496
 library(IBrokers)
 tws.connection  <- IBrokers::twsConnect(port = port)
+connection =tws.connection
 envir = ".GlobalEnv"
 twsDisconnect(tws.connection)
 
 
-snapShot <- function(twsCon, eWrapper, timestamp, file, ...){
-    if(missing(eWrapper))
-        eWrapper <- eWrapper()
-    names(eWrapper$.Data$data) <- eWrapper$.Data$symbols
-    
-    con <- twsCon[[1]]
-    while(TRUE){
-
-        if(!socketSelect(list(con), FALSE, NULL)) # infinte 'tries'
-            break
-        else {
-
-            # browser()
-            curMsg <- .Internal(readBin(con, "character", 1L, NA_integer_, TRUE, FALSE))
-      
-            if(!is.null(timestamp))
-                processMsg(curMsg, con, eWrapper, format(Sys.time(), timestamp), file, ...)
-            else 
-                processMsg(curMsg, con, eWrapper, timestamp, file, ...)
-            
-            if(!any(sapply(eWrapper$.Data$data, is.na)))
-                return(do.call(rbind, lapply(eWrapper$.Data$data, as.xts)))
-
-        }  
-    }
-}
-
 
 initTWS <- function(connection, symbol, barsize, duration, envir){
+
+    barsize  <- match.arg(barsize, c("1 week", "1 day", "1 hour", "30 mins", "15 mins", "5 mins"))
+    # duration <- match.arg(duration, paste(c("S", "D", "W", "M", "Y"), rep(1:1000)))
 
     combined <- unlist(strsplit(symbol, ":"))
     ticker   <- combined[1]
@@ -62,163 +39,71 @@ initTWS <- function(connection, symbol, barsize, duration, envir){
                         Contract    = tws.ticker,
                         barSize     = barsize,
                         duration    = duration)
-    tzone(XTS) <- "Etc/GMT+5"   
-    assign(symbol, OHLCV(XTS), envir = eval(parse(text = envir)))
+
+    ## PUT CHECK HERE IF TICKER STOPPED TRADING
+
+    XTS <- xts(
+        x        = cbind(rep(1, nrow(XTS)), XTS), 
+        dimnames = list(NULL, c(paste0(ticker, ".Trading"), dimnames(XTS)[[2]])))
+    tzone(XTS) <- "Etc/GMT+5"  
+
+    assign(symbol, TOHLCV(XTS), envir = eval(parse(text = envir)))
     return(TRUE)        
 }
 
-connection =tws.connection
+parameters = list(
+    `IBM:423423` = list(look.back = 200, days.factor = 10, fear.factor = 0.80, z.score = 2.2), 
+    `AMZN:34234` = list(look.back = 250, days.factor = 20, fear.factor = 0.20, z.score = 4.2), 
+    `AAPL:4234` = list(look.back = 130, days.factor = 60, fear.factor = 0.80, z.score = 2.2))
 
+symbol = "IBM:342343"
 symbols = c("IBM:423423", "AMZN:34234", "AAPL:4234")
 
 
-liveTWS <- function(connection, symbols, envr){
+liveTWS <- function(connection, symbol, barsize, envir){
 
-    # fetch symbol data
-    tickers      <- sapply(strsplit(symbols, ":"), function(x) x[1])
-    tws.tickers  <- lapply(tickers, IBrokers::twsSTK)
+    barsize <- match.arg(barsize, 
+      c("1 week", "1 day", "1 hour", "30 mins", "15 mins", "5 mins", "1 mins"))
+    to.FUN <- switch(barsize, 
+      "1 week"  = xts::to.weekly, 
+      "1 day"   = xts::to.daily, 
+      "1 hour"  = xts::to.hourly, 
+      "30 mins" = xts::to.minutes30, 
+      "15 mins" = xts::to.minutes15, 
+      "5 mins"  = xts::to.minutes5, 
+      "3 mins"  = xts::to.minutes3, 
+      "1 mins"  = xts::to.minutes 
+    )
 
-    reqRealTimeBars(connection, tws.tickers, eventWrapper = eWrapper.RealTimeBars.CSV(3), CALLBACK = snapShot)
-
-    DATA.update <- reqRealTimeBars(connection, tws.tickers, eventWrapper = eWrapper.RealTimeBars(), CALLBACK = snapShot)
-    
-
+    ticker      <- unlist(strsplit(symbol, ":"))[1]
+    tws.ticker  <- lapply(ticker, IBrokers::twsSTK)
     DATA.old    <- get(symbol, envir = eval(parse(text = envir))) # need for signal calcs
-    DATA.update <- OHLCV(DATA.update)
-    DATA.new    <- to.weekly(rbind(DATA.old[-1, ], DATA.update)) # maintain same size of mktdata object
 
+    snapshot    <- reqMktData(connection, tws.ticker, snapshot = TRUE) # not supposed to do this, but works?
+
+    ## PUT CHECK HERE IF TICKER STOPED TRADING
+
+    DATA.update <- as.xts(OHLCV(snapshot), order.by = snapshot$lastTimeStamp)
+    DATA.new    <- to.FUN(rbind(OHLCV(DATA.old[-1, ]), DATA.update), drop.time = FALSE) # maintain same size of mktdata object
+    DATA.new    <- cbind(Trading = rep(1, nrow(DATA.new)), DATA.new)
+
+    attributes(DATA.new)$updated <- snapshot$lastTimeStamp
     colnames(DATA.new) <- colnames(DATA.old)
-    return(DATA.new)
-
+    assign(symbol, DATA.new, envir = eval(parse(text = envir)))
+    return(TRUE)
 }  
 
-for(ticker in tickers){
-
-     print(ticker)
-     tws.ticker  <- IBrokers::twsSTK(ticker)
-     print(reqRealTimeBars(connection, tws.ticker, eventWrapper = eWrapper.RealTimeBars(), CALLBACK = snapShot))
-
-}
-
-eWrapper.snapshot <- function() {
-  eW <- eWrapper(NULL)
-  eW$assign.Data("EOD", FALSE)
-  sapply(c("bidSize","bidPrice",
-           "askPrice","askSize",
-           "lastPrice",
-           "Open","High","Low","Close",
-           "lastSize","Volume","lastTimeStamp"), function(X) eW$assign.Data(X, NA))
-  eW$tickPrice <- function(curMsg, msg, timestamp, file, ...)
-  {
-    tickType = msg[3]
-    if(tickType == .twsTickType$BID) {
-      eW$assign.Data("bidPrice", as.numeric(msg[4]))
-      eW$assign.Data("bidSize" , as.numeric(msg[5])) 
-    } else
-    if(tickType == .twsTickType$ASK) {
-      eW$assign.Data("askPrice", as.numeric(msg[4]))
-      eW$assign.Data("askSize" , as.numeric(msg[5])) 
-    } else
-    if(tickType == .twsTickType$LAST) {
-      eW$assign.Data("lastPrice", as.numeric(msg[4]))
-    } else
-    if(tickType == .twsTickType$OPEN) {
-      eW$assign.Data("Open", as.numeric(msg[4]))
-    } else
-    if(tickType == .twsTickType$HIGH) {
-      eW$assign.Data("High", as.numeric(msg[4]))
-    } else
-    if(tickType == .twsTickType$LOW) {
-      eW$assign.Data("Low", as.numeric(msg[4]))
-    } else
-    if(tickType == .twsTickType$CLOSE) {
-      eW$assign.Data("Close", as.numeric(msg[4]))
-    }
-  }
-  eW$tickSize <- function(curMsg, msg, timestamp, file, ...)
-  {
-    tickType <- msg[3]
-    if(tickType == .twsTickType$LAST_SIZE) {
-      eW$assign.Data("lastSize", as.numeric(msg[4]))
-    } else
-    if(tickType == .twsTickType$VOLUME) {
-      eW$assign.Data("Volume", as.numeric(msg[4]))
-    }
-  }
-  eW$tickString <- function(curMsg, msg, timestamp, file, ...)
-  {
-    tickType <- msg[3]
-    eW$assign.Data("lastTimeStamp", structure(as.numeric(msg[4]),
-                                        class=c("POSIXt","POSIXct")))
-  }
-  eW$tickSnapshotEnd <- function(curMsg, msg, timestamp, file, ...)
-  {
-    eW$assign.Data("EOD", TRUE)
-  }
-  return(eW)
-}
-
-connection <- tws.connection <- IBrokers::twsConnect(port = port)
-reqRealTimeBars(connection, lapply(tickers[1], twsSTK), eventWrapper = eWrapper(1))
-twsDisconnect(connection)
-
-reqMktData(connection, lapply(tickers, twsSTK), snapshot = TRUE)
-
-reqMktData(connection, lapply(tickers, twsSTK), eventWrapper = eWrapper.snapshot())
-
-
-if(snapshot == "1") {
-  eventWrapper <- eWrapper.snapshot()
-  while(1) {
-    socketSelect(list(con), FALSE, NULL)
-    curMsg <- readBin(con, character(), 1)
-    processMsg(curMsg, con, eventWrapper, NULL, file, ...)
-    if(curMsg == .twsIncomingMSG$TICK_SNAPSHOT_END) {
-    fullSnapshot <- rbind(fullSnapshot, data.frame(
-                            lastTimeStamp=eventWrapper$get.Data("lastTimeStamp"),
-                            symbol=symbol.or.local(Contract[[n]]),
-                            #symbol=Contract[[n]]$symbol,
-                            bidSize=eventWrapper$get.Data("bidSize"),
-                            bidPrice=eventWrapper$get.Data("bidPrice"),
-                            askPrice=eventWrapper$get.Data("askPrice"),
-                            askSize=eventWrapper$get.Data("askSize"),
-                            lastPrice=eventWrapper$get.Data("lastPrice"),
-                            Volume=eventWrapper$get.Data("Volume"),
-                            Open=eventWrapper$get.Data("Open"),
-                            High=eventWrapper$get.Data("High"),
-                            Low=eventWrapper$get.Data("Low"),
-                            Close=eventWrapper$get.Data("Close")
-                           ))
-    break
-    }
-  }
-if(n == length(Contract)) return(fullSnapshot)
-}
-ticker_id <- as.character(as.numeric(tickerId)+n)
-symbols. <- c(symbols., symbol.or.local(Contract[[n]]))
-#symbols. <- c(symbols., Contract[[n]]$symbol)
-}
-}
-
-
-tickers = c('IBM', "AMZN")
-
-
-    # add to old data
-    # periodicty checks
-    # remove last observation from old data
-    # reassign}
+init.FUN    = initTWS
+live.FUN    = liveTWS
 
 tradeStrategy <- function(
-    query,
 	strategy, 
 	parameters	= NULL, 
 	symbols 	= NULL,
 
     init        = initTWS,
     update      = liveIB,
-    report      = ,
-    error       = ,
+    error       = c("stop", "pass"),
 
     period      = "30min",
 	debug 		= FALSE, 
@@ -233,123 +118,102 @@ tradeStrategy <- function(
     strategy         <- quantstrat:::must.be.strategy(strategy)
     symbol.arguments <- new.env(hash = TRUE)
 
-    init.FUN    = initTWS
-    live.FUN    = liveTWS
-
     .check_FUN <- function(FUN){
         if(!is.function(FUN))
             FUN <- try(get(FUN, mode = 'function'))
             if(inherits(FUN, "try-error"))
-                stop("Please specify a mktdata init and live function")
+                stop("Please specify a mktdata init or live function")
         else
             return(TRUE)
     }
 
-    stopifnot(all(sapply(c(init.FUN, live.FUN), .check_FUN))) 
+    stopifnot(all(sapply(c(init.FUN, live.FUN), .check_FUN)))
+    stopifnot(is.list(parameters))
+    if(length(unique(sapply(parameters, length))) != 1)
+        stop("Please specify the same number of parameters per symbol")
 
-    # must pass parameters as a data.frame that corresponds to 
-    stopifnot(is.data.frame(parameters))
-    # need to check data.frame
+    if(!is.null(parameters) && !all(symbols %in% names(parameters)))
+        stop("The symbols included in your portfolio do not all have accompanying parameters")
+    strategy$paramsets <- NULL # no longer applicable
 
-    .initialize_mktdata <- function(FUN, ...){
+    if(is.null(symbols))
+       symbols <- ls(.getPortfolio(portfolio)$symbols)
 
-        if(!is.function(FUN))
-            stop("You must pass a user specified function to init data")
+    streamMktdata <- function(FUN, ...){
 
+        if(!any(names(as.list(match.call(expand.dots = TRUE))) %in% c("symbols", "symbol"))) 
+            stop("You must specify a symbol or symbols argument")
+
+        if(is.function(FUN)) 
+            initFUN <- FUN
+        else if(exists(FUN, mode = 'function'))
+            initFUN <- get(FUN, mode = "function")
+        else
+            stop(paste0("Could not stream data because ", FUN, " could not be found"))
+        
         # override defaults if specified and add dots
-        args <- quantstrat:::modify.args(formals(FUN), NULL, ..., dots = TRUE)
-        temp <- do.call(FUN, args, envir = parent.frame(1)) # run function
+        args <- quantstrat:::modify.args(formals(initFUN), NULL, ..., dots = TRUE)
+        temp <- do.call(initFUN, args, envir = parent.frame(1)) # run function
     }
 
-    .get_symbol_args <- function(symbol, param.combo){
-
-        # look up parameters specific to symbol
-        stopifnot(is.data.frame(param.combo))
-        param.labels        <- colnames(param.combo)
-        symbol.index        <- match("Symbol", param.labels)
-        symbol.parameters   <- param.combo[
-            param.combo$Symbol == symbol, -symbol.index]
-        
-        if(nrow(symbol.parameters) != 1) 
-            stop(paste("Could not find parameters for", symbol))
-
-        return(symbol.parameters)
-    }
-
-   
-    symbol = "IBM:342343"
-    # init strategy(s) per symbol 
-    for(symbol in symbols){
-        
-        symbol.arguments[[symbol]]  <- 
-            quantstrat:::install.param.combo(
-                strategy        = strategy,                             # global strategy 
-                param.combo     = .get_symbol_args(symbol, parameters), # symbol strategy
-                paramset.label  = names(strategy$paramsets))
-        symbol.arguments[[symbol]]$paramsets <- NULL                    # avoid confusion
-    }
-
-    # init mktdata objects
-    .initialize_mktdata(FUN = init.FUN, ... = ...) 
- 
-
-    .initialize_mktdata(FUN = init.FUN, connection = tws.connection, symbol = symbol, barsize = '1 day', duration = '1 Y', envir = ".GlobalEnv")
-    mktdata = (get(symbol))
+    # init data stream
+    # IF ON PERIOD 
+    streamMktdata(FUN = init.FUN, ... = ...) 
+    # streamMktdata(FUN = init.FUN, connection = tws.connection, symbol = symbols[3], barsize = '1 day', duration = '1 Y', envir = ".GlobalEnv")
+    # (get(symbol))
 
     while(TRUE){
 
-        #IF OLHC wait until next bar period then run update
-        # ?per symbol or as a group
+        for(symbol in symbols){
 
-        #IF BBO then continously querry for the bid ask spread and feed into apply rules
+            sret <- new.env(hash = TRUE)
+            streamMktdata(FUN = live.FUN, ...) # update the datafeed for symbol
+            # streamMktdata(FUN = live.FUN, connection = tws.connection, symbol = symbol, barsize = '1 day', envir = ".GlobalEnv")
 
-        # what until Sys.time reaches period for update - proc time
+            if(!is.null(mdenv))
+                envir <- if(is.function(mdenv)) mdenv else eval(parse(text = mdenv))
+            else
+                envir <- .GlobalEnv
 
-        # update across all contracts
+            mktdata <- get(symbol, envir = envir)
 
-        # if perido
+            # loop over indicators
+            sret$indicators <- applyIndicators(
+            	strategy 	= strategy, 
+            	mktdata 	= mktdata, 
+            	parameters 	= parameters[[symbol]]
+            	# ... 
+            )
 
-       # if BBO trade on ticks vs if OHLC trade on bars
+            if(inherits(sret$indicators,"xts") && 
+               nrow(mktdata) == nrow(sret$indicators)){
+                mktdata         <- sret$indicators
+                sret$indicators <- NULL
+            }
+               
+            # loop over signals
+            sret$signals <- applySignals(
+                strategy    = strategy, 
+                mktdata     = mktdata, 
+                parameters  = parameters[[symbol]]
+                # ... 
+            )
+            signals.num <- length(strategy$signals)
+            signals.idx <- ncol(sret$signals) 
 
-       for(symbol in symbols){
-	       sret <- new.env(hash = TRUE)
-           .update_mktdata(FUN = live.FUN, ...) # update the datafeed for symbol
+            if(inherits(sret$signals,"xts") && 
+               nrow(mktdata) == nrow(sret$signals)){
+                mktdata         <- sret$signals
+                sret$signals    <- NULL
+            }
 
-        Cl(mktdata)
-
-        mktdata  = cbind(IBM.Trading = rep(1, nrow(mktdata)), mktdata)
-
-        # loop over indicators
-        sret$indicators <- applyIndicators(
-        	strategy 	= strategy, 
-        	mktdata 	= mktdata, 
-        	parameters 	= parameters
-        	# ... 
-        )
-
-        if(inherits(sret$indicators,"xts") && 
-           nrow(mktdata) == nrow(sret$indicators)){
-            mktdata         <- sret$indicators
-            sret$indicators <- NULL
-        }
-           
-        # loop over signals
-        sret$signals <- applySignals(
-            strategy    = strategy, 
-            mktdata     = mktdata, 
-            parameters  = parameters
-            # ... 
-        )
-        signals.num <- length(strategy$signals)
-        signals.idx <- ncol(sret$signals) 
-
-        if(inherits(sret$signals,"xts") && 
-           nrow(mktdata) == nrow(sret$signals)){
-            mktdata         <- sret$signals
-            sret$signals    <- NULL
+            print(tail(mktdata))
         }
 
-        mktdata.current <- last(mktdata) # 'push' 
+    }
+}
+
+tradeStrategy(strategy =.strategy_name, parameters = parameters, )
 
         curIndex <- 1 
     ## push into env that stores mktdata for each symbol
