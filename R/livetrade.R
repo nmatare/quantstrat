@@ -6,15 +6,7 @@ symbol = "IBM:342343"
 
 # pass symbols
 # pass parameters 
-
-parameters <- data.frame(
-	Symbol = "IBM:342343",
-	border_value.z_score = 1.96, 
-	border_value.look_back = 254, 
-	border_value.fixed = FALSE, 
-	fear_factor.factor = 0.90, 
-	days_factor.factor = 10
-)
+load.strategy(.strategy_name) # load the desired strategy
 
 port = 7496
 library(IBrokers)
@@ -25,22 +17,21 @@ twsDisconnect(tws.connection)
 
 
 
-initTWS <- function(connection, symbol, barsize, duration, envir){
+initTWS <- function(connection, symbol, period, duration, envir){
 
-    barsize  <- match.arg(barsize, c("1 week", "1 day", "1 hour", "30 mins", "15 mins", "5 mins"))
-    # duration <- match.arg(duration, paste(c("S", "D", "W", "M", "Y"), rep(1:1000)))
+    barsize  <- match.arg(period, 
+        c("1 week", "1 day", "1 hour", "30 mins", "15 mins", "5 mins", "1 min"))
+    duration <- match.arg(duration, 
+        c(paste0(1:356, " D"), paste0(1:52L, " W"), paste0(1:12, " M"), c("1 Y")))
 
-    combined <- unlist(strsplit(symbol, ":"))
-    ticker   <- combined[1]
-    # permno   <- combined[2]
-    tws.ticker  <- IBrokers::twsSTK(ticker)
+    ticker     <- unlist(strsplit(symbol, ":"))[1]
+    tws.ticker <- IBrokers::twsSTK(ticker)
+
     XTS         <- IBrokers::reqHistoricalData(
                         conn        = connection, 
                         Contract    = tws.ticker,
                         barSize     = barsize,
                         duration    = duration)
-
-    ## PUT CHECK HERE IF TICKER STOPPED TRADING
 
     XTS <- xts(
         x        = cbind(rep(1, nrow(XTS)), XTS), 
@@ -60,10 +51,10 @@ symbol = "IBM:342343"
 symbols = c("IBM:423423", "AMZN:34234", "AAPL:4234")
 
 
-liveTWS <- function(connection, symbol, barsize, envir){
-
-    barsize <- match.arg(barsize, 
-      c("1 week", "1 day", "1 hour", "30 mins", "15 mins", "5 mins", "1 mins"))
+liveTWS <- function(connection, symbol, period, envir){
+    browser()
+    barsize <- match.arg(period, 
+      c("1 week", "1 day", "1 hour", "30 mins", "15 mins", "5 mins", "1 min"))
     to.FUN <- switch(barsize, 
       "1 week"  = xts::to.weekly, 
       "1 day"   = xts::to.daily, 
@@ -80,8 +71,8 @@ liveTWS <- function(connection, symbol, barsize, envir){
     DATA.old    <- get(symbol, envir = eval(parse(text = envir))) # need for signal calcs
 
     snapshot    <- reqMktData(connection, tws.ticker, snapshot = TRUE) # not supposed to do this, but works?
-
-    ## PUT CHECK HERE IF TICKER STOPED TRADING
+    if(is.na(snapshot$lastTimeStamp)) 
+        stop(paste0("Error pulling data for: ", symbol))
 
     DATA.update <- as.xts(OHLCV(snapshot), order.by = snapshot$lastTimeStamp)
     DATA.new    <- to.FUN(rbind(OHLCV(DATA.old[-1, ]), DATA.update), drop.time = FALSE) # maintain same size of mktdata object
@@ -93,41 +84,31 @@ liveTWS <- function(connection, symbol, barsize, envir){
     return(TRUE)
 }  
 
-init.FUN    = initTWS
-live.FUN    = liveTWS
+strategy    = .strategy_name
+period = "1 min"
 
 tradeStrategy <- function(
 	strategy, 
 	parameters	= NULL, 
 	symbols 	= NULL,
 
-    init        = initTWS,
-    update      = liveIB,
-    error       = c("stop", "pass"),
+    init        = NULL,
+    update      = NULL,
+
 
     period      = "30min",
 	debug 		= FALSE, 
 	gc 			= FALSE,
 	rule.subset = NULL,
 	mdenv 		= NULL,
+    trace       = TRUE,
 	...
 ) 
 {
 
     # turn into strategy object
     strategy         <- quantstrat:::must.be.strategy(strategy)
-    symbol.arguments <- new.env(hash = TRUE)
 
-    .check_FUN <- function(FUN){
-        if(!is.function(FUN))
-            FUN <- try(get(FUN, mode = 'function'))
-            if(inherits(FUN, "try-error"))
-                stop("Please specify a mktdata init or live function")
-        else
-            return(TRUE)
-    }
-
-    stopifnot(all(sapply(c(init.FUN, live.FUN), .check_FUN)))
     stopifnot(is.list(parameters))
     if(length(unique(sapply(parameters, length))) != 1)
         stop("Please specify the same number of parameters per symbol")
@@ -139,10 +120,16 @@ tradeStrategy <- function(
     if(is.null(symbols))
        symbols <- ls(.getPortfolio(portfolio)$symbols)
 
-    streamMktdata <- function(FUN, ...){
+    suppressMessages( # load calendars for mktdata updates
+        bizdays::load_rmetrics_calendars(lubridate::year(Sys.time())))
 
-        if(!any(names(as.list(match.call(expand.dots = TRUE))) %in% c("symbols", "symbol"))) 
-            stop("You must specify a symbol or symbols argument")
+    fetchMktdata <- function(FUN, ...){
+
+        if(!any(names(as.list(match.call(expand.dots = TRUE))) %in% c("symbol"))) 
+            stop("You must specify a symbol argument to your function")
+
+        if(!any(names(as.list(match.call(expand.dots = TRUE))) %in% c("period"))) 
+            stop("You must specify a period(frequency) over which to trade your strategy")
 
         if(is.function(FUN)) 
             initFUN <- FUN
@@ -150,24 +137,109 @@ tradeStrategy <- function(
             initFUN <- get(FUN, mode = "function")
         else
             stop(paste0("Could not stream data because ", FUN, " could not be found"))
-        
+
         # override defaults if specified and add dots
         args <- quantstrat:::modify.args(formals(initFUN), NULL, ..., dots = TRUE)
-        temp <- do.call(initFUN, args, envir = parent.frame(1)) # run function
+        do.call(initFUN, args, envir = parent.frame(1)) # run function
     }
 
-    # init data stream
-    # IF ON PERIOD 
-    streamMktdata(FUN = init.FUN, ... = ...) 
-    # streamMktdata(FUN = init.FUN, connection = tws.connection, symbol = symbols[3], barsize = '1 day', duration = '1 Y', envir = ".GlobalEnv")
-    # (get(symbol))
+    updateOn <- function(period){
 
-    while(TRUE){
+        period <- match.arg(period, 
+          c("1 day", "1 hour", "30 mins", "15 mins", "5 mins", "1 min"))
 
+        if(exists("POLL")) # reduce CPU usuage by only looking every 'POLL' time periods
+            Sys.sleep(POLL) 
+  
+        if(period == "1 day"){
+            
+            RUN <- lubridate::hour(Sys.time())   == 15L && # query 05 min before
+                   lubridate::minute(Sys.time()) == 55L || # mktclose and 05 
+                   lubridate::hour(Sys.time())   == 09L && # after mktopen
+                   lubridate::minute(Sys.time()) == 35L
+            POLL    <<- 60L
+            SLEEP   <<- 60L * 60L * 6L + 60L * 20L # sleep for 6 hours 20 mins
+
+        } else if(period == "1 hour"){
+            
+            RUN     <- lubridate::minute(Sys.time()) == 0  # queries  every hour
+            POLL    <<- 60L - floor(lubridate::second(Sys.time())) # wake'up in the next 'POLL' seconds
+            SLEEP   <<- 60L
+
+        } else if(period == "30 mins"){
+            
+            RUN     <- lubridate::minute(Sys.time()) == 30 # queries  every 30min
+            POLL    <<- 60L - floor(lubridate::second(Sys.time())) # wake'up in the next 'POLL' seconds
+            SLEEP   <<- 60L * 30L
+
+        } else if(period == "15 mins"){
+            
+            RUN     <- lubridate::minute(Sys.time()) == 30 # queries  every 15min
+            POLL    <<- 60L - floor(lubridate::second(Sys.time())) # wake'up in the next 'POLL' seconds
+            SLEEP   <<- 60L * 15L 
+
+        } else if(period == "5 mins"){
+            
+            RUN     <- lubridate::minute(Sys.time()) == 5 # queries  every 5min
+            POLL    <<- 60L - floor(lubridate::second(Sys.time())) # wake'up in the next 'POLL' seconds
+            SLEEP   <<- 60L * 5L # sleep for 5 min
+
+        } else if(period == "1 min"){
+            
+            RUN     <- round(lubridate::second(Sys.time())) == 0  # queries  every minute
+            POLL    <<- (60 - floor(lubridate::second(Sys.time()))) / 60  # 'wakeup' the next 'POLL' seconds
+            SLEEP   <<- 60L # sleep for 60 seconds
+
+        } else 
+            return(NA)
+
+        return(RUN)
+        # SLEEP is return as number of seconds to the parent.env()
+        # POLL is return as number of seconds to the parent.env()
+    }
+
+    i = 1; fatal = FALSE # init parameters
+    while(!fatal){ # run until chron job exits or fatal error is thrown
+
+        if(trace && i == 1) 
+            message(paste0(" ... starting live strategy every ", period))
+
+        if(i == 1){ # init the data stream
+
+            while(!updateOn(period)) NULL # will poll until TRUE and then release 
+
+            if(trace) message(paste0(" ... initializing live data on ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))   
+
+            for(symbol in symbols) 
+                fetchMktdata(
+                    FUN     = init, 
+                    symbol  = symbol, 
+                    period  = period, 
+                    ...     = ...
+                )
+                # fetchMktdata(FUN = init.FUN, connection = tws.connection, symbol = symbol, barsize = '1 day', duration = '1 Y', envir = ".GlobalEnv")
+            i       = 2L    # index is now 2
+            updateOn(period) # set the POLL to next period
+        }
+
+        if(trace && i != 1)
+            message(paste0(" ... waiting for next ", period))
+
+        while(!updateOn(period) && i != 1) NULL # will poll until TRUE and then release 
+
+        if(trace) 
+            message(paste0(" ... streaming live data on ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))     
+
+        # trade the strategy
         for(symbol in symbols){
 
             sret <- new.env(hash = TRUE)
-            streamMktdata(FUN = live.FUN, ...) # update the datafeed for symbol
+            fetchMktdata( # update the datafeed for symbol
+                FUN     = update, 
+                symbol  = symbol, 
+                period  = period, 
+                ...     = ...
+            ) 
             # streamMktdata(FUN = live.FUN, connection = tws.connection, symbol = symbol, barsize = '1 day', envir = ".GlobalEnv")
 
             if(!is.null(mdenv))
@@ -179,10 +251,10 @@ tradeStrategy <- function(
 
             # loop over indicators
             sret$indicators <- applyIndicators(
-            	strategy 	= strategy, 
-            	mktdata 	= mktdata, 
-            	parameters 	= parameters[[symbol]]
-            	# ... 
+              strategy    = strategy, 
+              mktdata     = mktdata, 
+              parameters  = parameters[[symbol]]
+              # ... 
             )
 
             if(inherits(sret$indicators,"xts") && 
@@ -198,8 +270,8 @@ tradeStrategy <- function(
                 parameters  = parameters[[symbol]]
                 # ... 
             )
-            signals.num <- length(strategy$signals)
-            signals.idx <- ncol(sret$signals) 
+            # signals.num <- length(strategy$signals)
+            # signals.idx <- ncol(sret$signals) 
 
             if(inherits(sret$signals,"xts") && 
                nrow(mktdata) == nrow(sret$signals)){
@@ -207,13 +279,24 @@ tradeStrategy <- function(
                 sret$signals    <- NULL
             }
 
+            if(trace) 
+                message(paste0(" ... signal generated for: ", 
+                    symbol, ", executing rules"))
+
             print(tail(mktdata))
         }
 
+        i = i + 1 # corresponds to the number of updates    
     }
 }
 
-tradeStrategy(strategy =.strategy_name, parameters = parameters, )
+tradeStrategy(
+    strategy =.strategy_name, parameters = parameters, symbols = symbols, 
+    connection = tws.connection, period = "1 min", init = initTWS, update = liveTWS, 
+    duration = '1 W', envir = ".GlobalEnv")
+
+
+fetchMktdata(FUN = init.FUN, connection = tws.connection, symbol = symbol, barsize = '1 day', duration = '1 Y', envir = ".GlobalEnv")
 
         curIndex <- 1 
     ## push into env that stores mktdata for each symbol
