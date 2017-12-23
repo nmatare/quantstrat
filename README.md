@@ -11,3 +11,6 @@
 * 'applyStrategy' parameter's arugment supports lookup per symbol
 * 'applyStrategy' now accepts symbols in its 'Symbols' argument 
 * 'clone.orderbook' now removes orderbook history; that is, strip.history = TRUE does what it's supposed to
+
+#### [22 Decemember 2017]
+* 'clone.portfolio' no longer modifies the original portfolio object; aka .getPortfolio() method changed to getPortfolio()
