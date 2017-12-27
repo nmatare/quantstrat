@@ -137,7 +137,7 @@ getOrders <- function(portfolio,symbol,status="open",timespan=NULL,ordertype=NUL
         indices <- if(is.null(indices)) ind else ind & indices
     }
     if(!is.null(ordertype)) {
-        ordertype <- match.arg(ordertype, c("market", "goodaftertime", "limit", "stoplimit", "stoptrailing", "iceberg"))
+        ordertype <- match.arg(ordertype, c("market", "limit", "stoplimit", "stoptrailing", "iceberg"))
         ind <- ordercoredata[,"Order.Type"] == ordertype
         indices <- if(is.null(indices)) ind else ind & indices
     }
@@ -313,7 +313,7 @@ addOrder <- function(portfolio,
     #if(price==0) warning(paste(ordertype, "order for", qty, "has a price of zero."))
 
     if(!is.null(side) & !length(grep(side,c('long','short')))==1) stop(paste("side:",side," must be one of 'long' or 'short'"))
-    if(is.na(charmatch(ordertype,c("market","goodaftertime","limit","stoplimit","stoptrailing","iceberg")))) stop(paste("ordertype:",ordertype,' must be one of "market", "goodaftertime", "limit","stoplimit","stoptrailing" or "iceberg"'))
+    if(is.na(charmatch(ordertype,c("market","limit","stoplimit","stoptrailing","iceberg")))) stop(paste("ordertype:",ordertype,' must be one of "market","limit","stoplimit","stoptrailing" or "iceberg"'))
     if(!is.null(threshold) & length(price)>=1 )
     {
         if(length(grep(paste("^",ordertype,"$",sep=""),c("limit","stoplimit","stoptrailing","iceberg")))==1)
@@ -381,7 +381,7 @@ addOrder <- function(portfolio,
                           format(index( last(orderbook)), "%Y-%m-%d %H:%M:%OS6"), sep="::")
     }
 
-    # statustimestamp=NA # new orders don't have a status time leave empty
+    statustimestamp=NA # new orders don't have a status time
 
     # time in force
     if(time.in.force != '')
