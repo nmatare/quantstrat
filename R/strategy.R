@@ -163,7 +163,8 @@ applyStrategy <- function(strategy,
          }
 
          mktdata <- mktdata[if(is.null(rule.subset)) "/" else rule.subset] # cut mktdata object here based upon rule.subset (avoid dIndex problems)
-         
+         if(!length(mktdata)) next() # in the event the subset of data doesn't exist
+
          # loop over indicators
          sret$indicators <- applyIndicators(strategy=strategy, mktdata=mktdata , parameters=parameters[[symbol]], ... )
          
