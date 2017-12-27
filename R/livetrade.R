@@ -17,6 +17,29 @@ twsDisconnect(tws.connection)
 
 
 
+tws.ticker <-IBrokers::twsSTK("IBM")
+
+reqIds(connection)
+
+placeOrder(twsconn = connection, Contract = twsSTK("IBM"), 
+    Order = twsOrder(orderId = reqIds(connection), 
+        action = "BUY", totalQuantity = 10, orderType = "MKT"))
+
+ac=reqAccountUpdates(connection)
+as.character(ac[[1]]$AccountCode['value'])
+
+reqExecutions(twsconn = connection, reqId = "1", twsExecutionFilter(symbol = tws.ticker))
+
+reqExecutions(connection, reqId=1, ExecutionFilter = twsExecutionFilter()) 
+
+twsPortfolioValue(reqAccountUpdates(connection))
+
+reqAccountUpdates(connection)
+
+reqExecutions(connection, ExecutionFilter = twsExecutionFilter(clientId = '1'))
+
+reqOpenOrders(connection)
+
 initTWS <- function(connection, symbol, period, duration, envir){
 
     barsize  <- match.arg(period, 
@@ -82,7 +105,9 @@ liveTWS <- function(connection, symbol, period, envir){
     colnames(DATA.new) <- colnames(DATA.old)
     assign(symbol, DATA.new, envir = eval(parse(text = envir)))
     return(TRUE)
-}  
+}
+
+convertStrategy <- function(strategy, sizing, )  
 
 strategy    = .strategy_name
 period = "1 min"
@@ -198,13 +223,13 @@ tradeStrategy <- function(
         # POLL is return as number of seconds to the parent.env()
     }
 
-    i = 1; fatal = FALSE # init parameters
+    curIndex = 1; fatal = FALSE # init parameters
     while(!fatal){ # run until chron job exits or fatal error is thrown
 
-        if(trace && i == 1) 
+        if(trace && curIndex == 1) 
             message(paste0(" ... starting live strategy every ", period))
 
-        if(i == 1){ # init the data stream
+        if(curIndex == 1){ # init the data stream
 
             while(!updateOn(period)) NULL # will poll until TRUE and then release 
 
@@ -217,15 +242,15 @@ tradeStrategy <- function(
                     period  = period, 
                     ...     = ...
                 )
-                # fetchMktdata(FUN = init.FUN, connection = tws.connection, symbol = symbol, barsize = '1 day', duration = '1 Y', envir = ".GlobalEnv")
-            i       = 2L    # index is now 2
+                for(symbol in symbols) fetchMktdata(FUN = initTWS, connection = tws.connection, symbol = symbol, period = period, duration = '1 W', envir = ".GlobalEnv")
+            curIndex = 2L    # index is now 2
             updateOn(period) # set the POLL to next period
         }
 
-        if(trace && i != 1)
+        if(trace && curIndex != 1)
             message(paste0(" ... waiting for next ", period))
 
-        while(!updateOn(period) && i != 1) NULL # will poll until TRUE and then release 
+        while(!updateOn(period) && curIndex != 1) NULL # will poll until TRUE and then release 
 
         if(trace) 
             message(paste0(" ... streaming live data on ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))     
@@ -270,8 +295,8 @@ tradeStrategy <- function(
                 parameters  = parameters[[symbol]]
                 # ... 
             )
-            # signals.num <- length(strategy$signals)
-            # signals.idx <- ncol(sret$signals) 
+            signals.num <- length(strategy$signals)
+            signals.idx <- ncol(sret$signals) 
 
             if(inherits(sret$signals,"xts") && 
                nrow(mktdata) == nrow(sret$signals)){
@@ -279,52 +304,56 @@ tradeStrategy <- function(
                 sret$signals    <- NULL
             }
 
+            if(last(mktdata)[ ,signals.idx] == 0) next # no signal generated
+
+            ## AND CHECK THAT NO ORDERS ARE CLOSED 
+
             if(trace) 
                 message(paste0(" ... signal generated for: ", 
                     symbol, ", executing rules"))
 
+           # Check to make sure path independent is not attempted
+            if(!any(unlist(sapply(strategy$rules, 
+               function(x) sapply(x, function(x) x$path.dep)))))
+                stop("Path independent rules not yet supported")
+
+            sret$rules       <- list()
+            mktdataTimeStamp <- last(mktdata) # following original convention
+
+            ## need to get positions from tracking portfolio so orders won't be triggered by osFUN
+
+
             print(tail(mktdata))
         }
 
-        i = i + 1 # corresponds to the number of updates    
+        curIndex = curIndex + 1 # corresponds to the number of updates    
     }
 }
+
+
 
 tradeStrategy(
     strategy =.strategy_name, parameters = parameters, symbols = symbols, 
     connection = tws.connection, period = "1 min", init = initTWS, update = liveTWS, 
     duration = '1 W', envir = ".GlobalEnv")
 
-
 fetchMktdata(FUN = init.FUN, connection = tws.connection, symbol = symbol, barsize = '1 day', duration = '1 Y', envir = ".GlobalEnv")
 
-        curIndex <- 1 
-    ## push into env that stores mktdata for each symbol
-
-        signal <- last(mktdata[ ,(signals.idx - signals.num + 1L):signals.idx])       
-        if(!signal) # if no signal ==> move onto next symbol 
-            next
-
-        # signal so fire rules
-        if(!any(unlist(sapply(strategy$rules, 
-           function(x) sapply(x, function(x) x$path.dep)))))
-            stop("Path indepedent rules not yet supported")
-        sret$rules <- list()
-
+## transform the backtest strategy object with live functions
+# function for order sizing
+# function for market orders
+# fnnctino for XYZ orders in each argument 
 
          
-tradeRules <- function(
+applyRules.live <- function(
     portfolio,
     symbol,
     mktdata,
     indicators,
     signals,
-    parameters){
-
-    # cut mktdata object to last signal // similar to dindex 
-    last(mktdata)
-
-    # only evaluate on current time t
+    parameters,
+    ...)
+{
 
     # get prices for the current signal
     if(is.BBO(mktdata)) {
@@ -368,15 +397,328 @@ tradeRules <- function(
         )
     }
 
+    mktinstr        <- getInstrument(symbol)
     mktPrice$isOHLC <- is.OHLC(mktdata)
     mktPrice$isBBO  <- is.BBO(mktdata)
 
-    ## loop through the rules and send the orders to the broker
+    timestamp = index(mktdata) # only one timestamp should be evaluated
+    types <- sort(factor(names(strategy$rules), # order is important, obviously
+        levels = c("pre", "risk", "order", "rebalance", 
+                   "exit", "enter", "chain", "post")))
 
-    ## evaluate if the orders where closed?
-    ## and get there results
+    # fire the rules on the observation
+    for(type in types){
 
-    ## save mktdata object
+        # rules are still processes in order but logic is passed onto the
+        # trading platform; that is, the platform, given that the correct
+        # parameters, should determine which orders are opened/closed/held
+
+        if(length(strategy$rules[[type]] >=  1)){
+
+            processRules(
+                ruletypelist    = strategy$rules[[type]], 
+                timestamp       = timestamp, 
+                path.dep        = TRUE, # FALSE not yet supported 
+                mktdata         = mktdata,
+                portfolio       = portfolio, 
+                symbol          = symbol, 
+                ruletype        = type, 
+                mktinstr        = mktinstr, 
+                parameters      = parameters, 
+                curIndex        = curIndex, # curIndex is 'update' in live implementation
+                ...)
+        } else 
+
+         next()
+    }
+
+    if(debug)
+        return(mktdata)
+    else
+        return()
+}
+
+switchOp <- function(backtestFUN, liveFUN){
+
+    if(is.function(liveFUN)) 
+        liveFUN <- liveFUN
+    else if(exists(liveFUN, mode = 'function'))
+        liveFUN <- get(liveFUN, mode = "function")
+    else
+        stop(paste0("Could not stream data because ", FUN, " could not be found"))    
+}
+
+processRules <- function(
+    ruletypelist, 
+    path.dep, 
+    ruletype, 
+    timestamp   = NULL, 
+    parameters  = NULL, 
+    ...)
+{
+    
+    for(rule in ruletypelist){
+        if(!rule$path.dep == path.dep) next()
+        if(is.function(rule$name))
+            ruleFun <- rule$name
+        else {
+            if(exists(rule$name, mode = "function"))
+
+                ruleFun <- get(rule$name, mode = "function")
+            
+            else {
+                rule.name <- paste("rule", rule$name, sep=".")
+
+                if(exists(rule.name, mode = "function")) {
+
+                    ruleFun     <- get(rule.name, mode = "function")
+                    rule$name   <- rule.name
+
+                } else {
+
+                    message("Skipping rule ", rule$name,
+                            " because there is no function by that name to call")
+                    next()
+                }
+            }
+        }
+
+        if(!isTRUE(rule$enabled)) next()
+
+        # modify a few things
+        rule$arguments$timestamp    = timestamp
+        rule$arguments$ruletype     = ruletype
+        rule$arguments$label        = rule$label
+
+        # replace default function arguments with rule$arguments
+        .formals <- formals(rule$name)
+        .formals <- modify.args(.formals, rule$arguments,   dots = TRUE)
+        .formals <- modify.args(.formals, parameters,       dots = TRUE)
+        .formals <- modify.args(.formals, NULL, ...,        dots = TRUE)
+        .formals$`...` <- NULL
+        
+        if(!is.null(rule$arguments$prefer)) 
+            .formals$prefer = rule$arguments$prefer
+        tmp_val <- do.call(ruleFun, .formals, envir = parent.frame(1))
+
+    } #end rules loop
+} 
+
+ruleSignal <- function(
+    mktdata=mktdata, 
+    timestamp, 
+    sigcol, 
+    sigval, 
+    orderqty=0, 
+    ordertype, 
+    orderside=NULL, 
+    orderset=NULL, 
+    threshold=NULL, 
+    tmult=FALSE, 
+    replace=TRUE, 
+    delay=0.0001, 
+    osFUN='osNoOp',
+    pricemethod=c('market','opside','active'), 
+    portfolio, 
+    symbol, 
+    ..., 
+    ruletype, 
+    TxnFees=0, 
+    prefer=NULL, 
+    sethold=FALSE, 
+    label='', 
+    order.price=NULL, 
+    chain.price=NULL, 
+    time.in.force=''
+)
+{
+    if(!is.function(osFUN)) # original osFUN should now be replaced w/ live vr.
+        osFUN <- match.fun(osFUN)
+
+    # curIndex is the 'update' number now
+    curIndex <- eval(match.call(expand.dots=TRUE)$curIndex, parent.frame())
+
+    if(curIndex > 0 && curIndex <= nrow(mktdata) && (ruletype=='chain' || 
+        (!is.na(mktdata[curIndex,sigcol]) && mktdata[curIndex,sigcol]==sigval)))
+    {
+        #calculate order price using pricemethod
+        pricemethod<-pricemethod[1] #only use the first if not set by calling function
+
+        if(hasArg(prefer)) prefer=match.call(expand.dots=TRUE)$prefer
+        else prefer = NULL
+
+        #if(hasArg(TxnFees)) TxnFees=match.call(expand.dots=TRUE)$TxnFees
+        #else TxnFees=0
+
+        # compute threshold
+        if(!is.null(threshold))
+        {
+            if(!is.numeric(threshold))
+            {
+                # threshold should be the name of an indicator column in mktdata
+
+                col.idx <- grep(threshold, colnames(mktdata))
+
+                if(length(col.idx) < 1)
+                    stop(paste('no indicator column in mktdata matches threshold name "', threshold, '"', sep=''))
+                if(length(col.idx) > 1)
+                    stop(paste('more than one indicator column in mktdata matches threshold name "', threshold, '"', sep=''))
+
+                threshold <- as.numeric(mktdata[curIndex,col.idx])
+            }
+        }
+
+        if(is.null(orderside) & !isTRUE(orderqty == 0))
+        {
+            curqty<-getPosQty(Portfolio=portfolio, Symbol=symbol, Date=timestamp)
+            if (curqty>0 ){
+                #we have a long position
+                orderside<-'long'
+            } else if (curqty<0){
+                #we have a short position
+                orderside<-'short'
+            } else {
+                # no current position, which way are we going?
+                if (orderqty>0) 
+                    orderside<-'long'
+                else
+                    orderside<-'short'
+            }
+        }
+        
+        if(orderqty=='all'){
+            if (orderside=='long'){
+                #we're flattenting a long position
+                tmpqty <-  1
+            } else {
+                tmpqty <- -1
+            }
+        } else {
+            tmpqty <- orderqty
+        }
+
+    if(!is.null(order.price))
+    {
+        orderprice <- order.price
+    }
+    else if(!is.null(chain.price))
+    {
+        orderprice <- chain.price
+    }
+    else
+    {
+        # switch(pricemethod,
+        #     market = ,
+        #     opside = ,
+        #     active = {
+        #         if(is.BBO(mktdata)){
+        #         if (tmpqty>0) 
+        #             prefer='ask'  # we're buying, so pay what they're asking
+        #         else
+        #             prefer='bid'  # we're selling, so give it to them for what they're bidding  
+        #         } 
+        #         orderprice <- try(getPrice(x=mktdata[curIndex,], prefer=prefer)[,1]) 
+        #     },
+        #     passive =,
+        #     work =,
+        #     join = {
+        #         if(is.BBO(mktdata)){
+        #         if (tmpqty>0) 
+        #             prefer='bid'  # we're buying, so work the bid price
+        #         else
+        #             prefer='ask'  # we're selling, so work the ask price
+        #         }
+        #         orderprice <- try(getPrice(x=mktdata[curIndex,], prefer=prefer)[,1]) 
+        #     },
+        #     maker = {
+        #         if(hasArg(price) & length(match.call(expand.dots=TRUE)$price)>1) {
+        #         # we have prices, just use them
+        #         orderprice <- try(match.call(expand.dots=TRUE)$price)
+        #         } else {
+        #         if(!is.null(threshold)) {
+        #             baseprice <- last(getPrice(x=mktdata[curIndex,])[,1]) # this should get either the last trade price or the Close
+        #             if(hasArg(tmult) & isTRUE(match.call(expand.dots=TRUE)$tmult)) {
+        #             baseprice <- last(getPrice(x=mktdata[curIndex,])[,1]) # this should get either the last trade price or the Close
+        #             # threshold is a multiplier of current price
+        #             if (length(threshold)>1){
+        #                 orderprice <- baseprice * threshold # assume the user has set proper threshold multipliers for each side
+        #             } else {
+        #                 orderprice <- c(baseprice*threshold,baseprice*(1+1-threshold)) #just bracket on both sides
+        #             }
+        #             } else {
+        #             # tmult is FALSE or NULL, threshold is numeric
+        #             if (length(threshold)>1){
+        #                 orderprice <- baseprice + threshold # assume the user has set proper threshold numerical offsets for each order
+        #             } else {
+        #                 orderprice <- c(baseprice+threshold,baseprice+(-threshold)) #just bracket on both sides
+        #             }
+        #             }
+        #         } else{
+        #             # no threshold, put it on the averages?
+        #             stop('maker orders without specified prices and without threholds not (yet?) supported')
+        #             if(is.BBO(mktdata)){
+
+        #             } else {
+
+        #             }
+        #         }
+        #         }
+        #         if(length(orderqty)==1) orderqty <- c(orderqty,-orderqty) #create paired market maker orders at the same size
+        #     }
+        # ) # end switch
+
+        if(inherits(orderprice,'try-error')) orderprice<-NULL
+        if(length(orderprice)>1 && pricemethod!='maker') orderprice <- last(orderprice[timestamp])
+        if(!is.null(orderprice) && !is.null(ncol(orderprice))) orderprice <- orderprice[,1]
+    }
+
+        if(is.null(orderset)) orderset=NA
+        
+        ## now size the order
+        #TODO add fancy formals matching for osFUN
+        if(orderqty!='all')
+        {
+            orderqty <- osFUN(strategy=strategy, 
+                              data=mktdata, 
+                              timestamp=timestamp, 
+                              orderqty=orderqty, 
+                              ordertype=ordertype, 
+                              orderside=orderside, 
+                              portfolio=portfolio, 
+                              symbol=symbol,
+                              ...=...,
+                              ruletype=ruletype, 
+                              orderprice=as.numeric(orderprice))
+        }
+
+        if(!is.null(orderqty) && orderqty!=0 && length(orderprice))
+        {
+                addOrder(portfolio=portfolio, 
+                         symbol=symbol, 
+                         timestamp=timestamp, 
+                         qty=orderqty, 
+                         price=as.numeric(orderprice), 
+                         ordertype=ordertype, 
+                         side=orderside, 
+                         orderset=orderset, 
+                         threshold=threshold, 
+                         status="open", 
+                         replace=replace , 
+                         delay=delay, 
+                         tmult=tmult, 
+                         ...=..., 
+                         prefer=prefer, 
+                         TxnFees=TxnFees,
+                         label=label,
+                               time.in.force=time.in.force)
+        }
+    }
+    if(sethold) hold <<- TRUE
+}
+
+
+
+
     
 
 }
@@ -416,3 +758,158 @@ tradeRules <- function(
      if(isTRUE(debug)) return(ret)
 }
 
+
+    # fire the rules on the observation
+    for(type in types){
+        switch(type,
+                pre = 
+                {
+                    if(length(strategy$rules[[type]]) >= 1){
+                        ruleProc.live(
+                            ruletypelist    = strategy$rules$pre, 
+                            timestamp       = timestamp, 
+                            path.dep        = TRUE, # FALSE not yet supported 
+                            mktdata         = mktdata,
+                            portfolio       = portfolio, 
+                            symbol          = symbol, 
+                            ruletype        = type, 
+                            mktinstr        = mktinstr, 
+                            parameters      = parameters, 
+                            # curIndex        = curIndex, # remove arg
+                            ...
+                        )
+                    }
+                },
+                risk = 
+                {
+                    if(length(strategy$rules$risk) >= 1){
+                        ruleProc.live(
+                            ruletypelist    = strategy$rules$risk,
+                            timestamp       = timestamp, 
+                            path.dep        = TRUE, # FALSE not yet supported 
+                            mktdata         = mktdata,
+                            portfolio       = portfolio, 
+                            symbol          = symbol, 
+                            ruletype        = type, 
+                            mktinstr        = mktinstr,
+                            parameters      = parameters, 
+                            # curIndex        = curIndex, 
+                            ...
+                        )
+                    }
+                },
+                order = 
+                {
+
+                    stop("Not yet supported")
+                    if(length(strategy$rules[[type]]) >= 1){
+
+                        # will open a new market order
+                        # ruleProc.live( 
+                        #     ruletypelist    = strategy$rules[[type]],
+                        #     timestamp       = timestamp, 
+                        #     path.dep        = FALSE, 
+                        #     mktdata         = mktdata,
+                        #     portfolio       = portfolio, 
+                        #     symbol          = symbol, 
+                        #     ruletype        = type, 
+                        #     mktinstr        = mktinstr, 
+                        #     parameters      = parameters, 
+                        #     # curIndex        = curIndex, 
+                        #     ...
+                        # )
+
+                    } else {
+
+                        # else will close any orders that have not yet been filled
+                        # if(isTRUE(TRUE)) # only path depedent currently supported
+                        #     timespan <- format(timestamp, "::%Y-%m-%d %H:%M:%OS6") #may be unecessary
+                        # else
+                        #     timestamp=NULL
+                        # live function would query orderinfascture and search for closed orders
+                        # closed.orders <- ruleOrderProc(
+                        #     portfolio   = portfolio, 
+                        #     symbol      = symbol, 
+                        #     mktdata     = mktdata, 
+                        #     timestamp   = timestamp, 
+                        #     periodicity = freq, 
+                        #     # curIndex    = curIndex, 
+                        #     ...
+                        # )
+                    }
+                },
+                exit = ,enter = 
+                {
+
+                    if(length(strategy$rules[[type]]) >= 1){
+                        ruleProc.live(
+                            ruletypelist    = strategy$rules[[type]],
+                            timestamp       = timestamp, 
+                            path.dep        = TRUE, 
+                            mktdata         = mktdata,
+                            portfolio       = portfolio, 
+                            symbol          = symbol, 
+                            ruletype        = type,
+                            mktinstr        = mktinstr, 
+                            parameters      = parameters, 
+                            # curIndex        = curIndex, 
+                            ...
+                        )
+                    }
+                },
+                # if its an exit or enter it's not connected to anything
+                # but need
+
+                chain = 
+                {
+                    # if it's chained it's connected to another order
+                    if(!is.null(closed.orders))
+                    {
+                        # determine which closed orders are chained to an entry
+                        chain.rules      <- strategy$rules[[type]]
+                        chain.rule.names <- sapply(chain.rules, '[[', 'parent')
+                        closed.chain     <- closed.orders[closed.orders$Rule %in% chain.rule.names]
+                        # loop over each closed order and call ruleProc() on each rule
+                        for(i in seq_len(nrow(closed.chain))) {
+                            rules <- chain.rules[chain.rule.names %in% closed.chain$Rule[i]]
+                            for(j in seq_along(rules)){
+                                                               
+                                txns        <- getTxns(Portfolio=portfolio, Symbol=symbol, Dates=timestamp)
+                                txn.price   <- last(txns$Txn.Price)   # last() because there may be more than one txn at this timestamp
+
+                                ruleProc.live(
+                                    ruletypelist    = rules[j], 
+                                    timestamp       = timestamp, 
+                                    path.dep        = TRUE, 
+                                    mktdata         = mktdata, 
+                                    portfolio       = portfolio, 
+                                    symbol          = symbol, 
+                                    ruletype        = type, 
+                                    mktinstr        = mktinstr, 
+                                    parameters      = list(chain.price = txn.price)#, 
+                                    # curIndex        = curIndex
+                                )
+                            }
+                        }
+                    }
+                },
+                post = 
+                {
+                   
+                    if(length(strategy$rules$post) >= 1){
+                        ruleProc.live(
+                            ruletypelist    = strategy$rules$post,
+                            timestamp       = timestamp, 
+                            path.dep        = TRUE, 
+                            mktdata         = mktdata,
+                            portfolio       = portfolio, 
+                            symbol          = symbol, 
+                            ruletype        = type, 
+                            mktinstr        = mktinstr, 
+                            parameters      = parameters, 
+                            # curIndex        = curIndex, 
+                            ...)
+                    }
+                }
+        )
+    }
