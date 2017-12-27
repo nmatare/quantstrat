@@ -91,7 +91,7 @@ strategy <- function(name, ..., assets=NULL, constraints=NULL ,store=FALSE)
 #' @param strategy an object of type 'strategy' to add the indicator to
 #' @param portfolios a list of portfolios to apply the strategy to
 #' @param mktdata an xts object containing market data.  depending on indicators, may need to be in OHLCV or BBO formats, default NULL
-#' @param parameters a list of parameters named by symbol to be applied during evaluation of the strategy, default NULL
+#' @param parameters named list of parameters to be applied during evaluation of the strategy, default NULL
 #' @param ... any other passthru parameters
 #' @param debug if TRUE, return output list
 #' @param symbols character vector identifying symbols to initialize a portfolio for, default NULL
@@ -143,14 +143,10 @@ applyStrategy <- function(strategy,
        if(isTRUE(initStrat)) initStrategy(strategy=strategy, portfolio, symbols, ...=...)
        
        if(isTRUE(debug)) ret[[portfolio]]<-list() # this is slot [[i]] which we will use later
-       
-       if(is.null(symbols)) # else use the symbols the user specified
-        symbols <- ls(.getPortfolio(portfolio)$symbols)
-       
+       pobj<-.getPortfolio(portfolio)
+       symbols<- ls(pobj$symbols)
        sret<-new.env(hash=TRUE)
-       if(!is.null(parameters) && !all(symbols %in% names(parameters)))
-        stop("The symbols included in your portfolio do not all have accompanying parameters")
-
+       
        for (symbol in symbols){
          if(isTRUE(load.mktdata)){
              if(isTRUE(initBySymbol)) initSymbol(strategy, symbol, ... = ...)
@@ -161,12 +157,9 @@ applyStrategy <- function(strategy,
              }
              mktdata <- get(symbol, envir=envir)
          }
-
-         mktdata <- mktdata[if(is.null(rule.subset)) "/" else rule.subset] # cut mktdata object here based upon rule.subset (avoid dIndex problems)
-         if(!length(mktdata)) next() # in the event the subset of data doesn't exist
-
+         
          # loop over indicators
-         sret$indicators <- applyIndicators(strategy=strategy, mktdata=mktdata , parameters=parameters[[symbol]], ... )
+         sret$indicators <- applyIndicators(strategy=strategy, mktdata=mktdata , parameters=parameters, ... )
          
          if(inherits(sret$indicators,"xts") & nrow(mktdata)==nrow(sret$indicators)){
            mktdata<-sret$indicators
@@ -174,7 +167,7 @@ applyStrategy <- function(strategy,
          }
          
          # loop over signal generators
-         sret$signals <- applySignals(strategy=strategy, mktdata=mktdata, parameters=parameters[[symbol]], ... )
+         sret$signals <- applySignals(strategy=strategy, mktdata=mktdata, parameters=parameters, ... )
          
          if(inherits(sret$signals,"xts") & nrow(mktdata)==nrow(sret$signals)){
            mktdata<-sret$signals
@@ -198,9 +191,10 @@ applyStrategy <- function(strategy,
                                         Dates=NULL, 
                                         indicators=sret$indicators, 
                                         signals=sret$signals, 
-                                        parameters=parameters[[symbol]],  
+                                        parameters=parameters,  
                                         ..., 
                                         path.dep=FALSE,
+                                        rule.subset=rule.subset,
                                         debug=debug)
          
          # Check for open orders
@@ -213,9 +207,10 @@ applyStrategy <- function(strategy,
                                                      Dates=NULL, 
                                                      indicators=sret$indicators, 
                                                      signals=sret$signals, 
-                                                     parameters=parameters[[symbol]],  
+                                                     parameters=parameters,  
                                                      ..., 
                                                      path.dep=TRUE,
+                                                     rule.subset=rule.subset,
                                                      debug=debug)}
          
          if(isTRUE(initBySymbol)) {

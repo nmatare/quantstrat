@@ -99,9 +99,6 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
     isOHLCmktdata <- is.OHLC(mktdata)
     isBBOmktdata  <- is.BBO(mktdata)
     
-    if(isOHLCmktdata && all(is.na(OHLC(mktdataTimestamp)[ ,1:4])) || isBBOmktdata && all(is.na(BBO(mktdataTimestamp)[ ,1:3])))
-      return() # in the event that they're NAs in mktdta and limit orders try to fire on unavailable data
-
     for (ii in OpenOrders.i )
     {
       if(ordersubset[ii, "Order.Status"] != "open")   # need to check this bc side effects may have changed order.status in this loop
@@ -295,7 +292,7 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
                    # check to see if price moved through the limit
                    if(mktPrice >= orderPrice) {  # buy when price >= stop
                      txnprice <- mktPrice
-                     txntime  <- timestamp
+                     txntime <- timestamp
                    }
                    # move stop if price < stop - thresh
                    else {
@@ -400,38 +397,11 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
                  }
                }
                
-             }, # end stoptrailing
-             goodaftertime = {
-               if(!isBBOmktdata){
-
-                 # The desired 'time delay' or 'after time' is placed into 
-                 # Order.StatusTime. So grab the time delay and modify the 
-                 # txntime so that it includes the time delay--preserving the 
-                 # timestamp for any following orders
-
-                 time_delay <- as.numeric(ordersubset[ii, "Order.StatusTime"])
-                 txntime    <- index(ordersubset[ii, ]) + time_delay
-                 txntime    <- index(first(mktdata[paste0(txntime, "::")]))
-
-                 if(is.na(txntime) || !length(txntime))
-                  txnprice <- NA # if txntime is past available mktdata make NA
-                 else {
-                  txntime    <- as.POSIXct(format(txntime, "%Y-%m-%d %H:%M:%S"), tz = Sys.getenv('TZ')) # first obs after time_delay
-                  txnprice   <- as.numeric(getPrice(mktdata[txntime], prefer = prefer)[ ,1])
-                 }
-                 
-                 ordersubset[ii,"Order.Price"] <- txnprice # replace the Order.Price with what the order would(or did) cost       
-     
-               } else if(isBBOmktdata){
-     
-                 stop("Not yet supported")
-               }
-             }           
-      ) 
+             } # end stoptrailing
+      )
       
       if(!is.null(txnprice) && !isTRUE(is.na(txnprice)))
       {
-
         #make sure we don't cross through zero
         pos<-getPosQty(portfolio,symbol,timestamp)
         
@@ -448,7 +418,7 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
           }
           ordersubset[ii,"Order.Status"]<-'closed'
         }
-        ordersubset[ii,"Order.StatusTime"]<-format(txntime, "%Y-%m-%d %H:%M:%S")
+        ordersubset[ii,"Order.StatusTime"]<-format(timestamp, "%Y-%m-%d %H:%M:%S")
         
         #close all other orders in the same order set
         OrdersetTag = toString(ordersubset[ii,"Order.Set"])
@@ -458,11 +428,11 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
         if(length(OpenInOrderset.i) > 0)
         {
           ordersubset[OpenInOrderset.i, "Order.Status"] = 'canceled'
-          ordersubset[OpenInOrderset.i, "Order.StatusTime"]<-format(txntime, "%Y-%m-%d %H:%M:%S")
+          ordersubset[OpenInOrderset.i, "Order.StatusTime"]<-format(timestamp, "%Y-%m-%d %H:%M:%S")
           
         } 
       }
-    } # end loop over open orders  
+    } #end loop over open orders  
     
     # now put the orders back in
     # assign order book back into place (do we need a non-exported "put" function?)
