@@ -14,3 +14,6 @@
 
 #### [22 Decemember 2017]
 * 'clone.portfolio' no longer modifies the original portfolio object; aka .getPortfolio() method changed to getPortfolio()
+
+#### [05 January 2018]
+* moved sret variable in strategy.R inside the symbols for loop so that sret does not get overridden with last symbol
