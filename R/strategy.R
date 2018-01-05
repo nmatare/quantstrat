@@ -147,11 +147,11 @@ applyStrategy <- function(strategy,
        if(is.null(symbols)) # else use the symbols the user specified
         symbols <- ls(.getPortfolio(portfolio)$symbols)
        
-       sret<-new.env(hash=TRUE)
        if(!is.null(parameters) && !all(symbols %in% names(parameters)))
         stop("The symbols included in your portfolio do not all have accompanying parameters")
 
        for (symbol in symbols){
+         sret <- new.env(hash = TRUE)
          if(isTRUE(load.mktdata)){
              if(isTRUE(initBySymbol)) initSymbol(strategy, symbol, ... = ...)
              if(!is.null(mdenv)){
