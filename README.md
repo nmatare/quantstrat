@@ -17,3 +17,7 @@
 
 #### [05 January 2018]
 * moved sret variable in strategy.R inside the symbols for loop so that sret does not get overridden with last symbol
+
+#### [06 January 2018]
+* patch to goodaftertime orders so that indices not belonging to goodaftertime ordertypes are skipped and not evaluated
+
