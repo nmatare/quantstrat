@@ -406,20 +406,18 @@ ruleOrderProc <- function(portfolio, symbol, mktdata, timestamp=NULL, ordertype=
 
                  # The desired 'time delay' or 'after time' is placed into 
                  # Order.StatusTime. So grab the time delay and modify the 
-                 # txntime so that it includes the time delay--preserving the 
-                 # timestamp for any following orders
+                 # txntime so that it includes the time delay-- making sure 
+                 # to preserve the timestamp for any following orders
 
-                 time_delay <- as.numeric(ordersubset[ii, "Order.StatusTime"])
-                 txntime    <- index(ordersubset[ii, ]) + time_delay
-                 txntime    <- index(first(mktdata[paste0(txntime, "::")]))
+                 time.delay   <- as.numeric(ordersubset[ii, "Order.StatusTime"])
+                 txntime      <- index(ordersubset[ii, ]) + time.delay
+                 futureIndex  <- first(mktdata[paste0(txntime, "::"), which.i = TRUE])
 
-                 if(is.na(txntime) || !length(txntime))
-                  txnprice <- NA # if txntime is past available mktdata make NA
-                 else {
-                  txntime    <- as.POSIXct(format(txntime, "%Y-%m-%d %H:%M:%S"), tz = Sys.getenv('TZ')) # first obs after time_delay
-                  txnprice   <- as.numeric(getPrice(mktdata[txntime], prefer = prefer)[ ,1])
-                 }
-                 
+                 if(curIndex < futureIndex || is.null(futureIndex))
+                  next() # not at appropiate time to place txns OR future is past last(mktdata)
+                
+                 txntime    <- as.POSIXct(format(index(mktdata[futureIndex]), "%Y-%m-%d %H:%M:%S"), tz = Sys.getenv('TZ')) # first obs after time_delay
+                 txnprice   <- as.numeric(getPrice(mktdata[txntime], prefer = prefer)[ ,1])
                  ordersubset[ii,"Order.Price"] <- txnprice # replace the Order.Price with what the order would(or did) cost       
      
                } else if(isBBOmktdata){
