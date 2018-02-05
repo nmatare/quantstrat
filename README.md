@@ -23,3 +23,6 @@
 
 #### [27 January 2018]
 * removed combine.results from apply.paramset and set verbosity to FALSE; these additive functions should be done outside of apply.paramset
+
+#### [04 February 2018]
+* removed tradeStats calculation from apply.paramsets and bloated code
