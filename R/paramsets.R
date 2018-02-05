@@ -473,10 +473,12 @@ apply.paramset <- function(strategy.st
         .audit <- audit
 
     # create foreach object
-    fe <- foreach(param.combo=iter(param.combos,by='row'),
-        .verbose=verbose, .errorhandling='pass',
+    fe <- foreach(param.combo=iter(param.combos, by='row'),
+        .verbose=verbose, 
+        .errorhandling='pass',
         .packages=c('quantstrat', packages),
-        .multicombine=TRUE, .maxcombine=max(2,nrow(param.combos)),
+        .multicombine=TRUE, 
+        .maxcombine=max(2,nrow(param.combos)),
         .export=c(env.functions, symbols), ...)
     # remove all but the param.combo iterator before calling %dopar%
     # this allows us to pass '...' through foreach to the expression
@@ -505,7 +507,7 @@ apply.paramset <- function(strategy.st
 
         list2env(env.instrument, envir=FinancialInstrument:::.instrument)
 
-        for (sym in symbols)
+        for(sym in symbols)
           assign(sym, get(sym), .GlobalEnv)
 
         put.portfolio(portfolio.st, portfolio)
@@ -550,14 +552,7 @@ apply.paramset <- function(strategy.st
             redisConnect(host=redisContext$host)
         }
 
-        if(calc == 'slave')
-        {
-            updatePortf(result$portfolio.st, ...)
-            result$tradeStats <- tradeStats(result$portfolio.st)
-
-            if(!is.null(user.func) && !is.null(user.args))
-                result$user.func <- do.call(user.func, user.args)
-        }
+        updatePortf(result$portfolio.st, ...)
         result$portfolio <- getPortfolio(result$portfolio.st)
         result$orderbook <- getOrderBook(result$portfolio.st)
 
