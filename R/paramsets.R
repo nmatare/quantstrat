@@ -477,7 +477,9 @@ apply.paramset <- function(strategy.st
         .verbose=verbose, 
         .errorhandling='pass',
         .packages=c('quantstrat', packages),
-        .multicombine=TRUE, 
+        .multicombine=TRUE,
+        .inorder=TRUE, # be explicit
+        .options.multicore=list(preschedule=FALSE), # 1 task per worker at a time
         .maxcombine=max(2,nrow(param.combos)),
         .export=c(env.functions, symbols), ...)
     # remove all but the param.combo iterator before calling %dopar%
